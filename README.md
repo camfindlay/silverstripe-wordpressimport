@@ -31,13 +31,28 @@ NOTE: After upgrading from blog 1.x to 2.x don't forget to run dev/tasks/BlogMig
 WARNING: downgrade was only tested on an empty blog, if you have already entered any content on your blog, this may have some unexpected results!
 
 ###Usage Overview
-It will change any links to uploaded images and 
+
+### Images 
+Default - It will change any links to uploaded images and 
 files in your posts that follow the convention 
 "http://yourdomain.com/wp-content/uploads/yyyy/mm/filesname.jpg" 
 to "http://yourdomain.com/assets/Uploads/yyyy/mm/filesname.jpg" 
 which allows you to migrate you uploaded images 
 and files over to SilverStripe assets folder while maintaining 
 images in your posts.
+
+To configure your project to handle other file path conventions 
+update your mysite/_config/config.yml file with the following regex code:
+
+    BlogImport:
+      ImageReplaceRegx: /YOUR REGEX/
+  
+  for example: 
+
+    BlogImport:
+      ImageReplaceRegx: /(http[s?]:\/\/[\w\.\/]+)?\/files\//i
+  
+The module will check to apply default or config settings  
 
 ###Optional Rewriting
 Add this in your .htaccess file to port old 

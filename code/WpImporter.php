@@ -2,7 +2,7 @@
 require('WpParser.php');
 
 /*
- * Decorates a BlogHolder page type, specified in _config.php
+ * Decorates a Blog page type, specified in _config
  */
 
 class WpImporter extends DataExtension
@@ -11,7 +11,7 @@ class WpImporter extends DataExtension
     public function updateCMSFields(FieldList $fields)
     {
         $html_str = '<iframe name="WpImport" src="WpImporter_Controller/index/' . $this->owner->ID . '" width="500"> </iframe>';
-        $fields->addFieldToTab('Root.Import', new LiteralField("ImportIframe", $html_str));
+        $fields->addFieldToTab('Root.Import', LiteralField::create("ImportIframe", $html_str));
     }
 }
 
@@ -33,7 +33,7 @@ class WpImporter_Controller extends Controller
         }
 
         // Check for requirements
-        if (!class_exists('BlogHolder')) {
+        if (!class_exists('Blog')) {
             user_error('Please install the blog module before importing from Wordpress', E_USER_ERROR);
         }
     }
@@ -43,10 +43,10 @@ class WpImporter_Controller extends Controller
         return $this->renderWith('WpImporter');
     }
 
-    protected function getBlogHolderID()
+    protected function getBlogID()
     {
-        if (isset($_REQUEST['BlogHolderID'])) {
-            return $_REQUEST['BlogHolderID'];
+        if (isset($_REQUEST['BlogID'])) {
+            return $_REQUEST['BlogID'];
         }
 
         return $this->request->param('ID');
@@ -61,7 +61,7 @@ class WpImporter_Controller extends Controller
         return Form::create($this, "UploadForm",
                         FieldList::create(
                             FileField::create("XMLFile", 'Wordpress XML file'),
-                            HiddenField::create("BlogHolderID", '', $this->getBlogHolderID())
+                            HiddenField::create("BlogID", '', $this->getBlogID())
                         ),
                         FieldList::create(
                             FormAction::create('doUpload', 'Import Wordpress XML file')
@@ -95,11 +95,11 @@ class WpImporter_Controller extends Controller
 
     protected function getOrCreatePost($wordpressID)
     {
-        if ($wordpressID && $post = BlogEntry::get()->filter(array('WordpressID' => $wordpressID))->first()) {
+        if ($wordpressID && $post = BlogPost::get()->filter(array('WordpressID' => $wordpressID))->first()) {
             return $post;
         }
 
-        return BlogEntry::create();
+        return BlogPost::create();
     }
 
     protected function importPost($post)
@@ -107,20 +107,56 @@ class WpImporter_Controller extends Controller
         // create a blog entry
         $entry = $this->getOrCreatePost($post['WordpressID']);
 
-        $entry->ParentID = $this->getBlogHolderID();
+        $entry->ParentID = $this->getBlogID();
 
         // $posts array and $entry have the same key/field names
         // so we can use update here.
-
         $entry->update($post);
 
-        //Create an initial write as a draft copy otherwise a write() 
-        //in SS3.1.2+ will go live and never have a draft Version.
-        //@see http://doc.silverstripe.org/framework/en/changelogs/3.1.2#default-current-versioned-
-        //stage-to-live-rather-than-stage for details.
-        $entry->writeToStage('Stage');
-        
-        //If the post was published on WP, now ensure it is also live in SS.
+        // write this post to the database before modifying the list of authors
+        // because of the onBeforeWrite logic in BlogPost->onBeforeWrite
+        // this will use the current logged in user as the author of this post
+        // but we will override that below
+        $entry->write();
+
+        //Assign the author as a Member object
+        //TODO deal with XML that doesn't define authors
+        if($author = Member::get()->filter(array('WordpressAuthorLogin' => $post['AuthorLogin']))->first()) {
+            //We need to remove the default admin author assigned when the BlogPost object gets created with no data
+            //TODO this is not acting as expected default admin still be added.
+            $entry->Authors()->RemoveAll();
+            $entry->Authors()->add($author);
+        }
+
+        //Create and attach tags
+        foreach($post['Tags'] as $tag){
+
+            //check if it already exists
+            if(!$blogtag = BlogTag::get()->filter(array('Title' => $tag))->first()){
+                $blogtag = BlogTag::create();
+                $blogtag->Title = $tag;
+                $blogtag->BlogID = $entry->ParentID;
+                $blogtag->write();
+            }
+            $entry->Tags()->add($blogtag);
+
+        }
+
+        //Create and attach categories
+        foreach($post['Categories'] as $category){
+
+            //check if it already exists
+            if(!$blogcategory = BlogCategory::get()->filter(array('Title' => $category))->first()){
+                $blogcategory = BlogCategory::create();
+                $blogcategory->Title = $category;
+                $blogcategory->BlogID = $entry->ParentID;
+                $blogcategory->write();
+            }
+            $entry->Categories()->add($blogcategory);
+
+        }
+
+        $entry->write();
         if ($post['IsPublished']) {
             $entry->publish("Stage", "Live");
         }
@@ -128,6 +164,24 @@ class WpImporter_Controller extends Controller
         $this->importComments($post, $entry);
 
         return $entry;
+    }
+
+    protected function importAuthor($author)
+    {
+
+        //check if a user already exists with this email address if they do get the object and add the wp username
+        if(!$member = Member::get()->filter(array('Email' => $author['Email']))->first())
+        {
+
+           $member = Member::create();
+
+           $member->FirstName = $author['FirstName'];
+           $member->Email = $author['Email'];
+        }
+
+        $member->WordpressAuthorLogin = $author['Login'];
+        $member->write();
+
     }
 
     public function doUpload($data, $form)
@@ -147,10 +201,19 @@ class WpImporter_Controller extends Controller
             die;
         }
 
-        // Parse posts
         $wp = new WpParser($file['tmp_name']);
-        $posts = $wp->parse();
+
+        //Parse authors
+        $authors = $wp->parseauthors();
+        foreach($authors as $author){
+            $this->importAuthor($author);
+        }
+
+        // Parse posts
+        $posts = $wp->parseposts();
+
         foreach ($posts as $post) {
+
             $this->importPost($post);
         }
 

@@ -19,7 +19,7 @@ class DeletPostsTask extends BuildTask
     {
 
         // Are there members with a clear text password?
-        $posts = DataObject::get("BlogEntry");
+        $posts = BlogPost::get();
         $count = 0;
         $commentCount = 0;
         foreach ($posts as $post) {

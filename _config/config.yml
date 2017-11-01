@@ -1,0 +1,40 @@
+---
+Name: wordpressimport
+After:
+  - 'framework/*'
+  - 'cms/*'
+---
+Director:
+  rules:
+    'WpImporter_Controller//$Action/$ID/$OtherID': 'WpImporter_Controller'
+    'import//$Action': 'WordpressParser'
+Member:
+  extensions:
+    - WpAuthorLogin
+File:
+  allowed_extensions:
+    - xml
+---
+Only:
+  moduleexists: 'blog'
+---
+Blog:
+  extensions:
+    - 'WordpressImportBlogExtension'
+
+BlogPost:
+  extensions:
+    - 'WpImportedObject'
+
+
+---
+Only:
+  moduleexists: 'comments'
+---
+Comment:
+  extensions:
+    - 'WpImportedObject'
+
+WordpressParser:
+  extensions:
+    - 'WordpressCommentImport'

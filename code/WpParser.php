@@ -31,12 +31,6 @@ class WpParser
     private $posts;
 
     /**
-     * List of "tag" types that should be converted to tags
-     * @var array List of valid tags
-     */
-    public static $allowed_category_domains = array('category', 'post_tag');
-
-    /**
      * List of "page" types that should be converted to BlogEntry items
      * @param array List of valid types
      */
@@ -58,25 +52,28 @@ class WpParser
     }
 
     /**
-     * Extracts the categories from the blog post in the form of a single tag
+     * Extracts the tags from the blog post in the form of a single tag
      * value suitable for BlogPost
-     * @param array $cats list of categories
-     * @return string A string of comma separated tag values
+     * @param array $items list of tags
+     * @param string $type the type of item to filter on
+     * @return array array of taxonomic values
      */
-    public function ParseTags($cats)
+    public function ParseTaxonomy($items, $type)
     {
         // Uses this array to check if the category to be added already exists in the post
-        $categories = array();
-        foreach ($cats as $cat) {
+        $taxonomy = array();
+        foreach ($items as $item) {
+            //filter for the type
+
             // Cleanup multiline and other whitespace characters
-            $catName = html_entity_decode(trim(preg_replace('/\s+/m', ' ', (string)$cat)));
+            $itemName = html_entity_decode(trim(preg_replace('/\s+/m', ' ', (string)$item)));
             
             // is this in tags or categories? We only want categories to become SS Tags
-            if (in_array($cat['domain'], self::$allowed_category_domains) && !in_array($catName, $categories)) {
-                $categories[] = (string) $catName;
+            if ($item['domain'] == $type && !in_array($itemName, $taxonomy)) {
+                $taxonomy[] = (string) $itemName;
             }
         }
-        return join(', ', $categories);
+        return $taxonomy;
     }
 
     /**
@@ -87,8 +84,14 @@ class WpParser
     public function ParseBlogContent($content)
     {
 
+        //  read config option, if not set default to 'uploads'
+        $regex = Config::inst()->get('BlogImport', 'ImageReplaceRegx');
+        if (empty($regex)) {
+            $regex = '/(http:\/\/[\w\.\/]+)?\/wp-content\/uploads\//i';
+        }
+
         // Convert wordpress-style image links to silverstripe asset filepaths
-        $content = preg_replace('/(http:\/\/[\w\.\/]+)?\/wp-content\/uploads\//i', '/assets/Uploads/', $content);
+        $content = preg_replace($regex, '/assets/Uploads/', $content);
 
         // Split multi-line blocks into paragraphs
         $split = preg_split('/\s*\n\s*\n\s*/im', $content);
@@ -105,9 +108,6 @@ class WpParser
                 $content .= "<p>$paragraph</p>";
             }
         }
-        
-        // Split single-line blocks with line-breaks
-        $content = nl2br($content);
 
         return $content;
     }
@@ -123,6 +123,7 @@ class WpParser
             'Name' => (string) $comment->comment_author,
             'Email' => (string) $comment->comment_author_email,
             'URL' => (string) $comment->comment_author_url,
+            'BaseClass' => (string) "SiteTree",
             'Comment' => (string) $comment->comment_content,
             'Created' => (string) $comment->comment_date,
             'Moderated' => !!$comment->comment_approved,
@@ -167,11 +168,12 @@ class WpParser
         return array(
             'Title' => (string) $item->title,
             'Link' => (string) $item->link,
-            'Author' => (string) $dc_ns->creator,
-            'Tags' => $this->ParseTags($item->category),
+            'AuthorLogin' => (string) $dc_ns->creator, //use this to lookup Member object
+            'Tags' => $this->ParseTaxonomy($item->category,'post_tag'), //use this to generate BlogTag objects
+            'Categories' => $this->ParseTaxonomy($item->category, 'category'), //use this to generate BlogCategory objects
             'Content' => $this->ParseBlogContent((string) $content_ns->encoded),
             'URLSegment' => (string) $wp_ns->post_name,
-            'Date' => (string) $wp_ns->post_date,
+            'PublishDate' => (string) $wp_ns->post_date,
             'Comments' => $this->parseComments($wp_ns),
             'WordpressID' => intval($wp_ns->post_id),
             'ProvideComments' => ($wp_ns->comment_status == 'open'),
@@ -184,7 +186,7 @@ class WpParser
      * @return array of posts
      */
 
-    public function parse()
+    public function parseposts()
     {
         $namespaces = $this->namespaces;
 
@@ -197,4 +199,32 @@ class WpParser
         }
         return $this->posts = $posts;
     }
+
+    /*
+    * Parses xml in $simple_xml to array of blog authors
+    * @return array of authors
+    */
+
+    public function parseauthors()
+    {
+        $namespaces = $this->namespaces;
+
+        $authors = array();
+        foreach ($this->simple_xml->channel->children($namespaces['wp'])->author as $author) {
+
+            if(!$firstName = (string) $author->author_first_name){
+                $firstName = (string) $author->author_display_name;
+            }
+
+            $authors[] = array(
+                'Email' => (string) $author->author_email,
+                'FirstName' => (string) $firstName,
+                'Surname' => (string) $author->author_last_name,
+                'Login' => (string) $author->author_login
+            );
+        }
+        return $authors;
+    }
+
+
 }
